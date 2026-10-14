@@ -84,6 +84,36 @@ def problem(u):
     if u["status"] != "active": return "Your access has been disabled. Contact the owner."
     if u["role"] != "admin" and u["is_demo"] and (u["demo_expires"] or "") < today(): return "Your demo access has expired. Contact the owner to continue."
 
+DEMO_AUTO = os.environ.get("DEMO_AUTOLOGIN") == "1"
+
+def showcase():
+    """Recording mode: one fictional demo account, populated with sample data. Never an admin."""
+    exp = (date.today() + timedelta(days=30)).isoformat()
+    u = q("select * from users where email='demo@landscapedesk.local'", one=True)
+    if u:
+        q("update users set status='active',is_demo=1,demo_expires=? where id=?", exp, u["id"]); return u["id"]
+    uid = ins("insert into users(email,pw,status,is_demo,demo_expires,created) values(?,?, 'active',1,?,?)",
+              "demo@landscapedesk.local", generate_password_hash(secrets.token_hex(16)), exp, now())
+    ensure_account(uid, "Green Valley Landscaping")
+    q("update settings set phone='(555) 010-2030',area='North County and nearby towns',hours='Mon-Sat, 8am-6pm',rate=25,markup=10,margin=25,"
+      "services='Lawn care|120\nGarden design|900\nPatio & paths|2500\nHedge trimming|180' where user_id=?", uid)
+    d = lambda n: (date.today() + timedelta(days=n)).isoformat()
+    ids = {}
+    for n, sv, st, off, val, ph in [("Maria Lopez", "Lawn care", "New", 0, 350, "555-0101"), ("Tom Becker", "Patio & paths", "Contacted", -2, 4200, "555-0102"),
+            ("Green Hills HOA", "Hedge trimming", "Quote Sent", 0, 1800, "555-0103"), ("Ana Silva", "Garden design", "Won", -10, 2600, "555-0104"),
+            ("Kevin Brooks", "Lawn care", "Quote Sent", -1, 480, "555-0105"), ("Priya Shah", "Garden design", "Contacted", 2, 1500, "555-0106"),
+            ("Dan Whitfield", "Patio & paths", "Lost", -6, 3900, "555-0107"), ("Olivia Grant", "Lawn care", "New", 3, 300, "555-0108")]:
+        ids[n] = ins("insert into leads(user_id,name,phone,service,status,follow,value,created,is_demo,notes) values(?,?,?,?,?,?,?,?,1,'Fictional demo record')",
+                     uid, n, ph, sv, st, d(off) if st not in ("Won", "Lost") else "", val, now())
+    for who, sv, st, hrs, wk, mat in [("Green Hills HOA", "Hedge trimming", "Sent", 6, 2, 80), ("Ana Silva", "Garden design", "Accepted", 24, 2, 700),
+                                      ("Kevin Brooks", "Lawn care", "Sent", 3, 1, 20), ("Dan Whitfield", "Patio & paths", "Declined", 40, 2, 1500), ("Tom Becker", "Patio & paths", "Draft", 36, 2, 1300)]:
+        f = {"service": sv, "hours": hrs, "workers": wk, "rate": 25, "cx": "Standard", "materials": mat, "margin": 25, "desc": "Fictional demo quote."}
+        c = calc(f, {"markup": 10})
+        ins("insert into quotes(user_id,lead_id,service,inp,labor,mat,other,cost,low,rec,high,final,status,created,sent,expires) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            uid, ids[who], sv, json.dumps(f), c["labor"], c["mat"], c["other"], c["cost"], c["low"], c["rec"], c["high"], c["rec"], st, now(),
+            d(-3) if st != "Draft" else "", d(11) if st == "Sent" else "")
+    return uid
+
 @app.before_request
 def guard():
     session.setdefault("csrf", secrets.token_hex(16))
@@ -91,6 +121,7 @@ def guard():
     g.u = g.s = None
     if request.endpoint in PUBLIC or request.endpoint in (None, "static"): return
     uid = session.get("uid")
+    if not uid and DEMO_AUTO: uid = session["uid"] = showcase()
     u = q("select * from users where id=?", uid, one=True) if uid else None
     msg = problem(u) if u else "Please sign in."
     if msg:
@@ -121,6 +152,7 @@ def fill(t, lead=None):
 # ---------- auth ----------
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    if DEMO_AUTO: return redirect(url_for("dash"))
     if request.method == "POST":
         u = q("select * from users where email=?", request.form.get("email", "").strip().lower(), one=True)
         if not u or not check_password_hash(u["pw"], request.form.get("password", "")): flash("Wrong email or password.")
