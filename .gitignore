@@ -1,0 +1,21 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# SQLite Database (Do not commit your local database file)
+*.sqlite3
+*.db
+
+# OS generated files
+.DS_Store
+Thumbs.db
